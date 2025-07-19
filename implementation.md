@@ -16,7 +16,7 @@
 
 ## Dependencies & Configuration
 
-- [ ] Step 2: Define default exclusion patterns
+- [x] Step 2: Define default exclusion patterns
 - **Task**: Add a config module listing built-in ignore patterns (e.g., `.env`, `node_modules/`, `__pycache__/`). Add required libraries to `requirements.txt`.
 - **Description**: Centralizes all non-source patterns so they can be customized.
 - **Files**:
@@ -27,7 +27,7 @@
 
 ## .gitignore Parsing
 
-- [ ] Step 3: Implement .gitignore loader
+- [x] Step 3: Implement .gitignore loader
 - **Task**: Create module that reads project’s `.gitignore`, compiles patterns via `pathspec`, and exposes `is_ignored(path: str) -> bool`.
 - **Description**: Allows exclusion logic to respect project-specific ignores.
 - **Files**:
@@ -37,7 +37,7 @@
 
 ## File Scanning
 
-- [ ] Step 4: Write recursive file scanner
+- [x] Step 4: Write recursive file scanner
 - **Task**: Implement `scan_files(root: Path) -> List[Path]` that walks the tree and collects all file paths.
 - **Description**: Gathers a complete list of candidate files before filtering.
 - **Files**:
