@@ -1,45 +1,36 @@
 """
-Copyfiles - A standalone script to copy project files with content.
+Copyfiles – A standalone script to copy project files *with* content.
 
-This script scans a directory tree, filters out ignored files based on .gitignore,
-user-provided config patterns, and sensible defaults, then generates a
-`copyfiles.txt` containing file paths and their contents for easy LLM context
-sharing.
+The script scans a directory tree, filters out ignored files based on .gitignore,
+user-provided config patterns, and sensible defaults, then writes a single
+`copyfiles.txt` that contains:
+
+1. A “Project tree” overview, showing the kept files/directories.
+2. Each kept file’s contents, enclosed in a language-tagged code fence.
+
+This is handy for piping an entire project into an LLM context.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from itertools import chain
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, Iterable, List, Optional
 
-# Custom exceptions for better error handling
-class CopyfilesError(Exception):
-    """Base exception for copyfiles errors."""
-    pass
+# ──────────────────────────────────────────────────────────────────────────
+# Exceptions
+# ──────────────────────────────────────────────────────────────────────────
+class CopyfilesError(Exception): ...
+class InvalidRootError(CopyfilesError): ...
+class ConfigFileError(CopyfilesError): ...
+class OutputError(CopyfilesError): ...
+class FileReadError(CopyfilesError): ...
 
-
-class InvalidRootError(CopyfilesError):
-    """Raised when the provided root directory is invalid."""
-    pass
-
-
-class ConfigFileError(CopyfilesError):
-    """Raised when there are issues with config files."""
-    pass
-
-
-class OutputError(CopyfilesError):
-    """Raised when there are issues writing output files."""
-    pass
-
-
-class FileReadError(CopyfilesError):
-    """Raised when there are issues reading source files."""
-    pass
-
-# Third-party dependency=
+# ──────────────────────────────────────────────────────────────────────────
+# Third-party dependency (pathspec)
+# ──────────────────────────────────────────────────────────────────────────
 try:
     import pathspec  # type: ignore
 except ImportError:  # pragma: no cover
@@ -48,95 +39,118 @@ except ImportError:  # pragma: no cover
     )
     sys.exit(1)
 
-# Default ignore patterns (extendable via --config)
+# ──────────────────────────────────────────────────────────────────────────
+# Defaults & helpers
+# ──────────────────────────────────────────────────────────────────────────
 DEFAULT_PATTERNS: List[str] = [
     ".env",
     "node_modules/",
     "__pycache__/",
-    "copyfiles.py",
+    "copyfiles.py",  # exclude the tool itself
 ]
-
 DEFAULT_SPEC = pathspec.PathSpec.from_lines("gitwildmatch", DEFAULT_PATTERNS)
 
-# .gitignore handling
+_LANG_MAP: Dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".jsx": "jsx",
+    ".json": "json",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".toml": "toml",
+    ".css": "css",
+    ".scss": "scss",
+    ".html": "html",
+    ".md": "markdown",
+    ".sh": "bash",
+    ".rb": "ruby",
+    ".go": "go",
+}
+
+
+def _lang_from_ext(path: Path) -> str:
+    """Return a language hint for fenced code blocks, defaulting to ''."""
+    return _LANG_MAP.get(path.suffix.lower(), "")
+
 
 def load_gitignore(root: Path) -> "pathspec.PathSpec":
-    """Compile the project’s ``.gitignore`` into a :class:`pathspec.PathSpec`."""
     gitignore_path = root / ".gitignore"
     if not gitignore_path.exists():
         return pathspec.PathSpec.from_lines("gitwildmatch", [])
-
     with gitignore_path.open("r", encoding="utf-8") as fh:
-        patterns = [line.rstrip("\n") for line in fh]
+        return pathspec.PathSpec.from_lines("gitwildmatch", fh)
 
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-
-# Config file handling
 
 def load_extra_patterns(config_path: Path) -> "pathspec.PathSpec":
-    """Read newline-separated patterns from *config_path* and compile spec."""
     if not config_path.exists():
         raise ConfigFileError(f"Config file '{config_path}' does not exist")
-    
     if not config_path.is_file():
         raise ConfigFileError(f"'{config_path}' is not a file")
-
     try:
         with config_path.open("r", encoding="utf-8") as fh:
-            lines = [ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")]
+            lines = [
+                ln.strip()
+                for ln in fh
+                if ln.strip() and not ln.lstrip().startswith("#")
+            ]
     except (OSError, UnicodeDecodeError) as e:
         raise ConfigFileError(f"Could not read config file '{config_path}': {e}")
-
     return pathspec.PathSpec.from_lines("gitwildmatch", lines)
 
-# File discovery
 
 def scan_files(root: Path) -> List[Path]:
-    """Recursively collect **all** files under *root*."""
     try:
         root = root.resolve()
     except (OSError, RuntimeError) as e:
         raise InvalidRootError(f"Could not resolve root path '{root}': {e}")
-    
     if not root.exists():
         raise InvalidRootError(f"Root directory '{root}' does not exist")
-    
     if not root.is_dir():
         raise InvalidRootError(f"Root path '{root}' is not a directory")
-
     try:
         return sorted(p for p in root.rglob("*") if p.is_file())
     except (OSError, PermissionError) as e:
         raise InvalidRootError(f"Could not scan directory '{root}': {e}")
 
-# File filtering
 
 def filter_files(
     paths: List[Path],
     root: Path,
     extra_spec: Optional["pathspec.PathSpec"] = None,
 ) -> List[Path]:
-    """Filter out files matched by `.gitignore`, DEFAULT_PATTERNS, or *extra_spec*."""
     gitignore_spec = load_gitignore(root)
-
     kept: List[Path] = []
     for p in paths:
-        try:
-            rel_path = p.relative_to(root).as_posix()
-        except ValueError:
-            rel_path = p.as_posix()
-
-        if gitignore_spec.match_file(rel_path):
+        rel = p.relative_to(root).as_posix()
+        if gitignore_spec.match_file(rel):
             continue
-        if DEFAULT_SPEC.match_file(rel_path):
+        if DEFAULT_SPEC.match_file(rel):
             continue
-        if extra_spec and extra_spec.match_file(rel_path):
+        if extra_spec and extra_spec.match_file(rel):
             continue
         kept.append(p)
-
     return kept
 
-# Output generation
+
+# ──────────────────────────────────────────────────────────────────────────
+# Rendering helpers
+# ──────────────────────────────────────────────────────────────────────────
+def build_project_tree(paths: Iterable[Path], root: Path) -> str:
+    """Create a 'tree'-style text representation from *paths*."""
+    parts: List[str] = ["Project tree\n"]
+    rel_paths = [p.relative_to(root) for p in paths]
+    # Collect every directory that contains a kept file so the tree looks complete
+    dir_set = {rp.parent for rp in rel_paths if rp.parent != Path(".")}
+    all_paths = sorted(chain(dir_set, rel_paths), key=lambda p: (p.parts, p.name))
+    for ap in all_paths:
+        depth = len(ap.parts) - 1
+        indent = "│   " * depth + ("├── " if depth else "")
+        parts.append(f"{indent}{ap.name}/" if ap.is_dir() else f"{indent}{ap.name}")
+    parts.append("")  # blank line after tree
+    return "\n".join(parts)
+
 
 def _is_binary(data: bytes) -> bool:
     return b"\0" in data
@@ -149,103 +163,96 @@ def write_file_list(
     max_bytes: int = 100_000,
     verbose: bool = False,
 ) -> None:
-    """Write headers and file contents to *out_path*."""
-
     try:
         out_path = out_path.resolve()
     except (OSError, RuntimeError) as e:
         raise OutputError(f"Could not resolve output path '{out_path}': {e}")
 
-    # Ensure output directory exists
-    out_dir = out_path.parent
-    if not out_dir.exists():
+    if not out_path.parent.exists():
         try:
-            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
         except (OSError, PermissionError) as e:
-            raise OutputError(f"Could not create output directory '{out_dir}': {e}")
+            raise OutputError(f"Could not create directory '{out_path.parent}': {e}")
 
     bytes_written = 0
-
     if verbose:
         print(f"[copyfiles] Writing to {out_path} …")
 
     try:
         with out_path.open("w", encoding="utf-8", newline="\n") as out_fh:
+            # 1) Project tree
+            out_fh.write(build_project_tree(paths, root))
+            # 2) File contents
             for p in sorted(paths):
-                try:
-                    rel = p.relative_to(root).as_posix()
-                except ValueError:
-                    rel = p.as_posix()
-
+                rel = p.relative_to(root).as_posix()
                 try:
                     raw = p.read_bytes()[: max_bytes + 1]
                 except (OSError, PermissionError, FileNotFoundError) as e:
                     if verbose:
                         print(f"[copyfiles] ! Could not read {rel}: {e}")
                     continue
-                except Exception as e:
-                    if verbose:
-                        print(f"[copyfiles] ! Unexpected error reading {rel}: {e}")
-                    continue
-
                 if _is_binary(raw):
                     if verbose:
-                        print(f"[copyfiles] - Skipping binary file {rel}")
+                        print(f"[copyfiles] - Skipping binary {rel}")
                     continue
-
                 text = raw.decode("utf-8", errors="replace")
                 truncated = len(raw) > max_bytes
                 if truncated:
                     text = text[:max_bytes]
 
-                out_fh.write(f"# {rel}\n")
-                out_fh.write(text)
+                lang = _lang_from_ext(p)
+                fence = f"```{lang}" if lang else "```"
+
+                out_fh.write(f"# {rel}\n{fence}\n{text}")
                 if truncated:
-                    out_fh.write("\n# [truncated]\n")
-                out_fh.write("\n\n")
+                    out_fh.write("\n# [truncated]")
+                out_fh.write("\n```\n\n")
                 bytes_written += len(text)
     except (OSError, PermissionError) as e:
-        raise OutputError(f"Could not write to output file '{out_path}': {e}")
+        raise OutputError(f"Could not write to '{out_path}': {e}")
 
     if verbose:
-        print(f"[copyfiles] Done. {len(paths)} files processed, {bytes_written} bytes written.")
+        print(
+            f"[copyfiles] Done → {out_path}. "
+            f"{len(paths)} files processed, {bytes_written} bytes written."
+        )
 
-# CLI entry-point 
 
+# ──────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         prog="copyfiles",
-        description="Generate a copyfiles.txt containing project files and contents.",
+        description="Generate a copyfiles.txt containing project tree + file contents.",
     )
-    parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
-    parser.add_argument(
+    p.add_argument("--root", type=Path, default=Path("."), help="Project root dir")
+    p.add_argument(
         "--out",
         type=Path,
         default=Path("copyfiles.txt"),
-        help="Output file path (default: copyfiles.txt)",
+        help="Output file (default: copyfiles.txt)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--config",
         type=Path,
-        help="Path to file with additional ignore patterns (one per line)",
+        help="Path to a file with extra ignore patterns (one per line)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--max-bytes",
         type=int,
         default=100_000,
-        help="Maximum bytes per file to include (default: 100k)",
+        help="Maximum bytes per file to include (default 100k)",
     )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    return parser.parse_args()
+    p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    return p.parse_args()
 
 
 def main() -> None:
-    """Run scan → filter → write to produce *copyfiles.txt*."""
     try:
         ns = _parse_args()
-
-        root: Path = ns.root.resolve()
-        out_path: Path = ns.out.resolve()
+        root = ns.root.resolve()
+        out_path = ns.out.resolve()
 
         extra_spec = None
         if ns.config:
@@ -266,10 +273,12 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        kept_files = filter_files(all_files, root, extra_spec=extra_spec)
-
+        kept_files = filter_files(all_files, root, extra_spec)
         if ns.verbose:
-            print(f"[copyfiles] {len(all_files)} files found, {len(kept_files)} after filtering.")
+            print(
+                f"[copyfiles] {len(all_files)} files found, "
+                f"{len(kept_files)} kept after filtering."
+            )
 
         try:
             write_file_list(
@@ -284,7 +293,7 @@ def main() -> None:
             sys.exit(1)
 
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user.", file=sys.stderr)
+        print("\nCancelled.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
