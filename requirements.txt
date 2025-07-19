@@ -1,0 +1,2 @@
+# Dependencies for copy_files package
+# This file will be populated in Step 2 with pathspec and other required libraries
