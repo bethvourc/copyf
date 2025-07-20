@@ -1,3 +1,7 @@
+# [NOTICE]
+
+This project is being refactored into a proper Python package as per the plan in implementation.md. Please see that file for progress and details.
+
 # Copyfiles
 
 A standalone Python script that generates a `copyfiles.txt` file containing your project's source files and their contents. Perfect for sharing code context with LLMs or creating project snapshots.

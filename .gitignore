@@ -150,5 +150,5 @@ ehthumbs.db
 Desktop.ini
 
 # Project specific
-copy_files.txt
-implementation.md
+*.txt
+*.md
