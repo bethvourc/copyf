@@ -37,6 +37,12 @@ def _parse_args() -> argparse.Namespace:
         default=100_000,
         help="Maximum bytes per file to include (default 100k)",
     )
+    p.add_argument(
+        "--skip-large",
+        type=int,
+        default=None,
+        help="Skip files larger than N KB before truncation (default: off)",
+    )
     p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
@@ -65,7 +71,7 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        kept_files = filter_files(all_files, root, extra_spec)
+        kept_files = filter_files(all_files, root, extra_spec, skip_large_kb=ns.skip_large)
         if ns.verbose:
             print(
                 f"[copyfiles] {len(all_files)} files found, "
@@ -79,6 +85,7 @@ def main() -> None:
                 root=root,
                 max_bytes=ns.max_bytes,
                 verbose=ns.verbose,
+                skip_large_kb=ns.skip_large,
             )
         except OutputError as e:
             print(f"Error: {e}", file=sys.stderr)

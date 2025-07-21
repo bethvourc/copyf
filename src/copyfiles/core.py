@@ -116,6 +116,7 @@ def filter_files(
     paths: List[Path],
     root: Path,
     extra_spec: Optional["pathspec.PathSpec"] = None,
+    skip_large_kb: Optional[int] = None,
 ) -> List[Path]:
     gitignore_spec = load_gitignore(root)
     kept: List[Path] = []
@@ -127,6 +128,12 @@ def filter_files(
             continue
         if extra_spec and extra_spec.match_file(rel):
             continue
+        if skip_large_kb is not None:
+            try:
+                if p.stat().st_size > skip_large_kb * 1024:
+                    continue
+            except (OSError, PermissionError):
+                continue
         kept.append(p)
     return kept
 
@@ -197,6 +204,7 @@ def write_file_list(
     root: Path,
     max_bytes: int = 100_000,
     verbose: bool = False,
+    skip_large_kb: Optional[int] = None,
 ) -> None:
     try:
         out_path = out_path.resolve()
@@ -212,6 +220,7 @@ def write_file_list(
     bytes_written = 0
     skipped: List[str] = []
     truncated_files: List[str] = []
+    skipped_for_size: List[str] = []
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     banner = (
         " _                                 _     _     \n"
@@ -242,6 +251,21 @@ def write_file_list(
         out_fh.write("## Files\n\n")
 
         for rel, anchor, p in file_sections:
+            # skip large files if not already filtered
+            if skip_large_kb is not None:
+                try:
+                    if p.stat().st_size > skip_large_kb * 1024:
+                        skipped_for_size.append(rel)
+                        if verbose:
+                            msg = f"[copyfiles] - Skipping large file {rel} (> {skip_large_kb} KB)"
+                            if COLORAMA_AVAILABLE:
+                                print(Fore.YELLOW + msg + Style.RESET_ALL)
+                            else:
+                                print(msg)
+                        continue
+                except (OSError, PermissionError):
+                    skipped.append(rel)
+                    continue
             out_fh.write(f"### {rel}\n<a id=\"{anchor}\"></a>\n")
             try:
                 raw = p.read_bytes()[: max_bytes + 1]
@@ -281,8 +305,12 @@ def write_file_list(
 
         # Summary 
         out_fh.write("## Summary\n\n")
-        out_fh.write(f"- **Total files kept:** {len(paths)}\n")
+        out_fh.write(f"- **Total files kept:** {len(paths) - len(skipped_for_size)}\n")
         out_fh.write(f"- **Total bytes written:** {bytes_written}\n")
+        if skipped_for_size:
+            out_fh.write(f"- **Files skipped for size:** {len(skipped_for_size)} (> {skip_large_kb} KB)\n")
+            for s in skipped_for_size:
+                out_fh.write(f"    - {s}\n")
         if skipped:
             out_fh.write(f"- **Files skipped:** {len(skipped)}\n")
             for s in skipped:
@@ -295,8 +323,8 @@ def write_file_list(
     if verbose:
         msg = (
             f"[copyfiles] Done → {out_path}. "
-            f"{len(paths)} files processed, {bytes_written} bytes written. "
-            f"{len(skipped)} skipped, {len(truncated_files)} truncated."
+            f"{len(paths) - len(skipped_for_size)} files processed, {bytes_written} bytes written. "
+            f"{len(skipped)} skipped, {len(truncated_files)} truncated, {len(skipped_for_size)} skipped for size."
         )
         if COLORAMA_AVAILABLE:
             print(Fore.GREEN + msg + Style.RESET_ALL)
