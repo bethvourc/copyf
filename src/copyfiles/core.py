@@ -4,11 +4,15 @@ Core logic for copyfiles package.
 
 from __future__ import annotations
 
+import datetime
+import sys
+from itertools import chain
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
-from itertools import chain 
-import sys
 
+from . import __version__
+
+# Optional third-party deps
 try:
     import pathspec  # type: ignore
 except ImportError:  # pragma: no cover
@@ -16,6 +20,13 @@ except ImportError:  # pragma: no cover
         "Error: 'pathspec' library is required. Install via 'pip install pathspec'.\n"
     )
     sys.exit(1)
+
+try:
+    from colorama import Fore, Style, init as colorama_init  # type: ignore
+    colorama_init()
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
 
 # Exceptions
 class CopyfilesError(Exception): ...
@@ -28,8 +39,10 @@ class FileReadError(CopyfilesError): ...
 DEFAULT_PATTERNS: List[str] = [
     ".env",
     "node_modules/",
-    "__pycache__/",
-    "copyfiles.py",  # exclude the tool itself
+    "__pycache__",
+    "copyfiles.py",   # exclude the tool itself
+    ".git/",          # exclude VCS data
+    ".gitignore",
 ]
 DEFAULT_SPEC = pathspec.PathSpec.from_lines("gitwildmatch", DEFAULT_PATTERNS)
 
@@ -52,15 +65,19 @@ _LANG_MAP: Dict[str, str] = {
     ".go": "go",
 }
 
+
 def _lang_from_ext(path: Path) -> str:
     return _LANG_MAP.get(path.suffix.lower(), "")
 
+
+# Ignore-file utilities
 def load_gitignore(root: Path) -> "pathspec.PathSpec":
     gitignore_path = root / ".gitignore"
     if not gitignore_path.exists():
         return pathspec.PathSpec.from_lines("gitwildmatch", [])
     with gitignore_path.open("r", encoding="utf-8") as fh:
         return pathspec.PathSpec.from_lines("gitwildmatch", fh)
+
 
 def load_extra_patterns(config_path: Path) -> "pathspec.PathSpec":
     if not config_path.exists():
@@ -78,6 +95,8 @@ def load_extra_patterns(config_path: Path) -> "pathspec.PathSpec":
         raise ConfigFileError(f"Could not read config file '{config_path}': {e}")
     return pathspec.PathSpec.from_lines("gitwildmatch", lines)
 
+
+# File-scanning helpers
 def scan_files(root: Path) -> List[Path]:
     try:
         root = root.resolve()
@@ -92,10 +111,12 @@ def scan_files(root: Path) -> List[Path]:
     except (OSError, PermissionError) as e:
         raise InvalidRootError(f"Could not scan directory '{root}': {e}")
 
+
 def filter_files(
     paths: List[Path],
     root: Path,
     extra_spec: Optional["pathspec.PathSpec"] = None,
+    skip_large_kb: Optional[int] = None,
 ) -> List[Path]:
     gitignore_spec = load_gitignore(root)
     kept: List[Path] = []
@@ -107,30 +128,83 @@ def filter_files(
             continue
         if extra_spec and extra_spec.match_file(rel):
             continue
+        if skip_large_kb is not None:
+            try:
+                if p.stat().st_size > skip_large_kb * 1024:
+                    continue
+            except (OSError, PermissionError):
+                continue
         kept.append(p)
     return kept
 
-def build_project_tree(paths: Iterable[Path], root: Path) -> str:
-    parts: List[str] = ["Project tree\n"]
-    rel_paths = [p.relative_to(root) for p in paths]
-    dir_set = {rp.parent for rp in rel_paths if rp.parent != Path(".")}
-    all_paths = sorted(chain(dir_set, rel_paths), key=lambda p: (p.parts, p.name))
-    for ap in all_paths:
-        depth = len(ap.parts) - 1
-        indent = "│   " * depth + ("├── " if depth else "")
-        parts.append(f"{indent}{ap.name}/" if ap.is_dir() else f"{indent}{ap.name}")
-    parts.append("")
-    return "\n".join(parts)
 
+# project-tree renderer
+def build_project_tree(paths: Iterable[Path], root: Path) -> str:
+    """
+    Return an ASCII tree (à la the Unix ``tree`` utility).
+
+    • Shows every ancestor directory so the hierarchy is complete.  
+    • Directories are listed before files.  
+    • Uses proper ``├──``, ``└──``, ``│   `` connectors.  
+    • Works purely from the *paths* list – no ``Path.is_dir`` on unknown paths.
+    """
+    # Build an in-memory nested dict representing the tree
+    tree: dict[str, dict | None] = {}
+
+    def _ensure_dir(rel: Path) -> dict:
+        cur = tree
+        for part in rel.parts:
+            cur = cur.setdefault(part, {})  # type: ignore[index]
+        return cur
+
+    rel_files: List[Path] = []
+    for p in paths:
+        rel = p.relative_to(root)
+        rel_files.append(rel)
+        # add all ancestor directories
+        for parent in rel.parents:
+            if parent == Path("."):
+                break
+            _ensure_dir(parent)
+
+    # mark the file nodes
+    for f in rel_files:
+        cur = tree
+        for part in f.parts[:-1]:
+            cur = cur[part]  # type: ignore[index]
+        cur[f.parts[-1]] = None  # type: ignore[index]
+
+    # Pretty-print 
+    lines: List[str] = ["Project tree\n"]
+
+    def _walk(node: dict | None, prefix: str = "") -> None:
+        if node is None:
+            return
+        items = sorted(node.items(), key=lambda kv: (kv[1] is None, kv[0]))  # dirs first
+        for idx, (name, child) in enumerate(items):
+            last = idx == len(items) - 1
+            connector = "└── " if last else "├── "
+            lines.append(f"{prefix}{connector}{name}{'/' if child is not None else ''}")
+            _walk(child, prefix + ("    " if last else "│   "))
+
+    _walk(tree)
+    lines.append("")
+    return "\n".join(lines)
+
+
+# Misc helpers
 def _is_binary(data: bytes) -> bool:
     return b"\0" in data
 
+
+# Main writer
 def write_file_list(
     paths: List[Path],
     out_path: Path,
     root: Path,
     max_bytes: int = 100_000,
     verbose: bool = False,
+    skip_large_kb: Optional[int] = None,
 ) -> None:
     try:
         out_path = out_path.resolve()
@@ -144,42 +218,115 @@ def write_file_list(
             raise OutputError(f"Could not create directory '{out_path.parent}': {e}")
 
     bytes_written = 0
-    if verbose:
-        print(f"[copyfiles] Writing to {out_path} …")
+    skipped: List[str] = []
+    truncated_files: List[str] = []
+    skipped_for_size: List[str] = []
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    banner = (
+        " _                                 _     _     \n"
+        "| | ___  ___ _ __ ___   ___  _ __ | |__ (_)_ __\n"
+        "| |/ _ \\| '__/ _` |/ _ \\| '_ \\| '_ \\| | '__|\n"
+        "| |  __/| | | (_| | (_) | |_) | | | | | |   \n"
+        "|_|\\___|_|  \\__,_|\\___/| .__/|_| |_|_|_|   \n"
+        "                       |_|                \n"
+    )
+    header = f"{banner}\n**copyfiles** v{__version__}  |  {now}\n"
 
-    try:
-        with out_path.open("w", encoding="utf-8", newline="\n") as out_fh:
-            out_fh.write(build_project_tree(paths, root))
-            for p in sorted(paths):
-                rel = p.relative_to(root).as_posix()
+    # Build a table-of-contents + gather metadata
+    toc = ["## Table of Contents\n", "- [Project Tree](#project-tree)"]
+    file_sections = []
+    for p in sorted(paths):
+        rel = p.relative_to(root).as_posix()
+        anchor = rel.translate(str.maketrans("", "", "./ -"))
+        toc.append(f"- [{rel}](#{anchor})")
+        file_sections.append((rel, anchor, p))
+    toc.append("- [Summary](#summary)\n")
+
+    # Write 
+    with out_path.open("w", encoding="utf-8", newline="\n") as out_fh:
+        out_fh.write(header)
+        out_fh.write("\n".join(toc) + "\n\n")
+        out_fh.write("## Project Tree\n\n")
+        out_fh.write(build_project_tree(paths, root) + "\n")
+        out_fh.write("## Files\n\n")
+
+        for rel, anchor, p in file_sections:
+            # skip large files if not already filtered
+            if skip_large_kb is not None:
                 try:
-                    raw = p.read_bytes()[: max_bytes + 1]
-                except (OSError, PermissionError, FileNotFoundError) as e:
-                    if verbose:
-                        print(f"[copyfiles] ! Could not read {rel}: {e}")
+                    if p.stat().st_size > skip_large_kb * 1024:
+                        skipped_for_size.append(rel)
+                        if verbose:
+                            msg = f"[copyfiles] - Skipping large file {rel} (> {skip_large_kb} KB)"
+                            if COLORAMA_AVAILABLE:
+                                print(Fore.YELLOW + msg + Style.RESET_ALL)
+                            else:
+                                print(msg)
+                        continue
+                except (OSError, PermissionError):
+                    skipped.append(rel)
                     continue
-                if _is_binary(raw):
-                    if verbose:
-                        print(f"[copyfiles] - Skipping binary {rel}")
-                    continue
-                text = raw.decode("utf-8", errors="replace")
-                truncated = len(raw) > max_bytes
-                if truncated:
-                    text = text[:max_bytes]
+            out_fh.write(f"### {rel}\n<a id=\"{anchor}\"></a>\n")
+            try:
+                raw = p.read_bytes()[: max_bytes + 1]
+            except (OSError, PermissionError, FileNotFoundError) as e:
+                skipped.append(rel)
+                if verbose:
+                    msg = f"[copyfiles] ! Could not read {rel}: {e}"
+                    if COLORAMA_AVAILABLE:
+                        print(Fore.YELLOW + msg + Style.RESET_ALL)
+                    else:
+                        print(msg)
+                continue
 
-                lang = _lang_from_ext(p)
-                fence = f"```{lang}" if lang else "```"
+            if _is_binary(raw):
+                skipped.append(rel)
+                if verbose:
+                    msg = f"[copyfiles] - Skipping binary {rel}"
+                    if COLORAMA_AVAILABLE:
+                        print(Fore.YELLOW + msg + Style.RESET_ALL)
+                    else:
+                        print(msg)
+                continue
 
-                out_fh.write(f"# {rel}\n{fence}\n{text}")
-                if truncated:
-                    out_fh.write("\n# [truncated]")
-                out_fh.write("\n```\n\n")
-                bytes_written += len(text)
-    except (OSError, PermissionError) as e:
-        raise OutputError(f"Could not write to '{out_path}': {e}")
+            text = raw.decode("utf-8", errors="replace")
+            truncated = len(raw) > max_bytes
+            if truncated:
+                text = text[:max_bytes]
+                truncated_files.append(rel)
+
+            lang = _lang_from_ext(p)
+            fence = f"```{lang}" if lang else "```"
+            out_fh.write(f"{fence}\n{text}")
+            if truncated:
+                out_fh.write("\n# [truncated]")
+            out_fh.write("\n```\n\n")
+            bytes_written += len(text)
+
+        # Summary 
+        out_fh.write("## Summary\n\n")
+        out_fh.write(f"- **Total files kept:** {len(paths) - len(skipped_for_size)}\n")
+        out_fh.write(f"- **Total bytes written:** {bytes_written}\n")
+        if skipped_for_size:
+            out_fh.write(f"- **Files skipped for size:** {len(skipped_for_size)} (> {skip_large_kb} KB)\n")
+            for s in skipped_for_size:
+                out_fh.write(f"    - {s}\n")
+        if skipped:
+            out_fh.write(f"- **Files skipped:** {len(skipped)}\n")
+            for s in skipped:
+                out_fh.write(f"    - {s}\n")
+        if truncated_files:
+            out_fh.write(f"- **Files truncated:** {len(truncated_files)}\n")
+            for t in truncated_files:
+                out_fh.write(f"    - {t}\n")
 
     if verbose:
-        print(
+        msg = (
             f"[copyfiles] Done → {out_path}. "
-            f"{len(paths)} files processed, {bytes_written} bytes written."
+            f"{len(paths) - len(skipped_for_size)} files processed, {bytes_written} bytes written. "
+            f"{len(skipped)} skipped, {len(truncated_files)} truncated, {len(skipped_for_size)} skipped for size."
         )
+        if COLORAMA_AVAILABLE:
+            print(Fore.GREEN + msg + Style.RESET_ALL)
+        else:
+            print(msg)
