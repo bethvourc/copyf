@@ -2,6 +2,7 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+#  Core project metadata
 [project]
 name = "copyfiles"
 version = "0.1.0"
@@ -9,17 +10,40 @@ description = "Generate a copyfiles.txt containing project tree + file contents.
 authors = [{ name = "Bethvour", email = "bethvourc@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.8"
+
 dependencies = [
     "pathspec>=0.11.0",
     "textual>=0.55.0",
     "colorama>=0.4.6",
     "rich>=13.5",
     "rich-argparse>=1.4",
-    "pyfiglet>=0.8"
+    "pyfiglet>=0.8",
 ]
 
 [project.scripts]
 copyfiles = "copyfiles.cli:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "coverage[toml]>=7.4",
+    "tox>=4.15",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+
+#  Pytest / Coverage configuration
+[tool.pytest.ini_options]
+addopts   = "-ra -q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["copyfiles"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered  = true
