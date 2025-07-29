@@ -68,7 +68,7 @@ Open `copyfiles.txt` in any editor or paste it directly into ChatGPT / Gemini �
 
 ---
 
-## 🧑‍💻 Contributing
+## Contributing
 
 1. **Fork** & clone the repo.
 2. Create a virtualenv and install dev deps:
