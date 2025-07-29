@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent      # project root
+ROOT = Path(__file__).resolve().parent.parent  # project root
 SRC_DIR = ROOT / "src"
 FIXTURES = Path(__file__).parent / "data" / "simple_proj"
 

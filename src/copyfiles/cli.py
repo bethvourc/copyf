@@ -1,5 +1,5 @@
 """
-CLI entry‑point for the *copyfiles* package.
+CLI entry-point for the *copyfiles* package.
 """
 
 from __future__ import annotations
@@ -21,66 +21,61 @@ from .core import (
     write_file_list,
 )
 
-# --------------------------------------------------------------------------- #
 # Colour / style helpers
-# --------------------------------------------------------------------------- #
 try:
-    from colorama import Fore, Style, init as colorama_init  # type: ignore
+    from colorama import Fore, Style  # type: ignore
+    from colorama import init as colorama_init
 except ImportError:  # pragma: no cover
     COLORAMA_AVAILABLE = False
 else:
     COLORAMA_AVAILABLE = True
     colorama_init()
 
-# honour --no-color flag or NO_COLOR env-var
 NO_COLOR_ENV = bool(os.environ.get("NO_COLOR"))
 USE_COLOR = COLORAMA_AVAILABLE and not NO_COLOR_ENV
 
 
-def _c(text: str, colour: str) -> str:  # colourise helper
+def _c(text: str, colour: str) -> str:
+    """Return *text* wrapped in colour codes if colouring is enabled."""
     return f"{colour}{text}{Style.RESET_ALL}" if USE_COLOR else text
 
 
-# frequently used colours (set to empty when colour disabled)
 CYAN = Fore.CYAN if USE_COLOR else ""
 GREEN = Fore.GREEN if USE_COLOR else ""
 YELLOW = Fore.YELLOW if USE_COLOR else ""
 RED = Fore.RED if USE_COLOR else ""
 RESET = Style.RESET_ALL if USE_COLOR else ""
 
-# Symbols (fallback to ASCII when colour disabled)
 TICK = "✔" if USE_COLOR else "[OK]"
 CROSS = "✖" if USE_COLOR else "[ERR]"
 ARROW = "➜" if USE_COLOR else "->"
 
-# --------------------------------------------------------------------------- #
-# Banner / examples for help
-# --------------------------------------------------------------------------- #
-
+# ─────────────────────────────────────────────────────────────
+# Banner / examples for --help
+# ─────────────────────────────────────────────────────────────
 def _make_banner() -> str:
-    """Return a coloured ASCII banner spelling COPYFILES.
-
-    Tries *pyfiglet* if available so the banner adapts to terminal
-    width/fonts. Falls back to a baked‑in block font, then to plain text.
-    """
+    """Return a coloured ASCII banner spelling COPYFILES."""
     try:
         from pyfiglet import Figlet  # type: ignore
 
         fig = Figlet(font="standard")
-        ascii_banner = fig.renderText("COPYFILES").rstrip("\n")
-    except Exception:  # noqa: BLE001  (any failure falls through)
-        ascii_banner = _c(r"""
+        banner = fig.renderText("COPYFILES").rstrip("\n")
+    except Exception:  # noqa: BLE001
+        banner = (
+            r"""
    ____  ___   ____   ____   __    ______  ______  _____  _____
   / ___|/ _ \ / ___| / ___|  \ \  / / __ \|  ____|/ ____|/ ____|
  | |   | | | | |     \___ \   \ \/ / |  | | |__  | (___ | (___
  | |___| |_| | |___   ___) |   \  /| |__| |  __|  \___ \ \___ \
   \____|\___/ \____| |____/     \/  \____/|_|     |____/ |____/
-""".rstrip("\n"), CYAN)
-    return _c(ascii_banner, CYAN)
+""".rstrip(
+                "\n"
+            )
+        )
+    return _c(banner, CYAN)
 
 
 BANNER = _make_banner()
-
 EXAMPLES = f"""
 Examples:
   {ARROW} copyfiles                          {YELLOW}# minimal run – creates copyfiles.txt{RESET}
@@ -89,10 +84,9 @@ Examples:
   {ARROW} copyfiles --root ../myproj --config .cfignore
 """
 
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────
 # Pretty help formatter
-# --------------------------------------------------------------------------- #
-
+# ─────────────────────────────────────────────────────────────
 class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
     def add_usage(self, usage, actions, groups, prefix=None):  # noqa: D401
         prefix = _c("Usage: ", YELLOW) if prefix is None else prefix
@@ -105,25 +99,27 @@ class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
         return f"{BANNER}\n\n" + super().format_help() + EXAMPLES
 
 
-# --------------------------------------------------------------------------- #
-# Message helpers
-# --------------------------------------------------------------------------- #
-
-def _out(stream, symbol: str, colour: str, msg: str) -> None:  # noqa: D401
+# ─────────────────────────────────────────────────────────────
+# Logging helpers
+# ─────────────────────────────────────────────────────────────
+def _out(stream, symbol: str, colour: str, msg: str) -> None:
     print(f"{_c(symbol, colour)} {msg}", file=stream)
 
 
 info: Callable[[str], None] = lambda m: _out(sys.stdout, "ℹ", CYAN, m)  # noqa: E731
 success: Callable[[str], None] = lambda m: _out(sys.stdout, TICK, GREEN, m)  # noqa: E731
 warn: Callable[[str], None] = lambda m: _out(sys.stderr, "!", YELLOW, m)  # noqa: E731
-fatal: Callable[[str], None] = (
-    lambda m: (_out(sys.stderr, CROSS, RED, m), sys.exit(1))
-)  # noqa: E731
 
-# --------------------------------------------------------------------------- #
+
+def fatal(msg: str) -> None:
+    """Print *msg* in red then exit(1)."""
+    _out(sys.stderr, CROSS, RED, msg)
+    sys.exit(1)
+
+
+# ─────────────────────────────────────────────────────────────
 # Argument parsing
-# --------------------------------------------------------------------------- #
-
+# ─────────────────────────────────────────────────────────────
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="copyfiles",
@@ -133,38 +129,22 @@ def _parse_args() -> argparse.Namespace:
     )
 
     p.add_argument("--root", type=Path, default=Path("."), help="Project root dir")
-    p.add_argument(
-        "--out", type=Path, default=Path("copyfiles.txt"), help="Output file name"
-    )
-    p.add_argument(
-        "--config",
-        type=Path,
-        help="File with extra ignore patterns (one per line)",
-    )
+    p.add_argument("--out", type=Path, default=Path("copyfiles.txt"), help="Output file")
+    p.add_argument("--config", type=Path, help="Extra ignore patterns file")
     p.add_argument(
         "--max-bytes",
         type=int,
         default=100_000,
-        help="Maximum bytes per file to include (default: 100 000)",
+        help="Truncate individual files after N bytes (default 100 000)",
     )
     p.add_argument(
         "--skip-large",
         type=int,
-        default=None,
         metavar="KB",
-        help="Skip files larger than KB *before* truncation (default: off)",
+        help="Skip files larger than KB kilobytes before truncation",
     )
-    p.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Verbose logging (scanning, filtering progress)",
-    )
-    p.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Disable coloured output (same as NO_COLOR=1)",
-    )
+    p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p.add_argument("--no-color", action="store_true", help="Disable coloured output")
     p.add_argument(
         "-V",
         "--version",
@@ -174,8 +154,7 @@ def _parse_args() -> argparse.Namespace:
     )
     ns = p.parse_args()
 
-    # user can force colour off via flag (overrides env)
-    if ns.no_color:
+    if ns.no_color:  # turn colours off globally
         global USE_COLOR, CYAN, GREEN, YELLOW, RED, RESET, TICK, CROSS, ARROW  # noqa: PLW0603
         USE_COLOR = False
         CYAN = GREEN = YELLOW = RED = RESET = ""
@@ -183,11 +162,11 @@ def _parse_args() -> argparse.Namespace:
 
     return ns
 
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
 
-def main() -> None:  # noqa: C901
+# ─────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────
+def main() -> None:  # noqa: C901 – CLI plumbing is naturally long
     try:
         ns = _parse_args()
         root = ns.root.resolve()

@@ -1,251 +1,109 @@
-# [NOTICE]
+# copyfiles
 
-This project is being refactored into a proper Python package as per the plan in implementation.md. Please see that file for progress and details.
+**copyfiles** is a small but mighty CLI that scans a project directory, filters out junk via `.gitignore`-style rules, and spits out a single **`copyfiles.txt`** containing:
 
-# Copyfiles
+1.  _Project tree_ – an indented outline of kept files and folders.
+2.  _File contents_ – each retained file wrapped in a language-tagged code fence.
 
-A standalone Python script that generates a `copyfiles.txt` file containing your project's source files and their contents. Perfect for sharing code context with LLMs or creating project snapshots.
+It’s perfect for piping an entire repo into an LLM prompt or sharing a compact “snapshot” of code with teammates.
+
+---
 
 ## Features
 
-- **Standalone script**: Drop `copyfiles.py` into any project and run
-- **Smart filtering**: Respects `.gitignore` and excludes common build artifacts
-- **Configurable**: Add custom ignore patterns via config file
-- **Content inclusion**: Includes file contents (not just paths) for complete context
-- **CLI interface**: Flexible command-line options for different workflows
+| Feature                      | What it does                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------- |
+| **Smart filtering**          | Honors your project’s `.gitignore`, plus optional extra ignore file (`--config`).        |
+| **Size guards & truncation** | Skip very large files (`--skip-large`) or keep only the first _N_ bytes (`--max-bytes`). |
+| **Colorful, pretty CLI**     | Rich / Colorama styling with automatic NO_COLOR detection.                               |
+| **Zero-config defaults**     | Run `copyfiles` in any repo and get a sane `copyfiles.txt` instantly.                    |
+
+---
 
 ## Installation
 
-1. **Install the required dependency**:
+```bash
+# Recommended: inside a virtualenv
+pip install copyfiles           # from PyPI
+# or, for local development
+git clone https://github.com/yourname/copyfiles
+cd copyfiles
+pip install -e '.[dev]'         # installs package + test/QA deps
+```
 
-   ```bash
-   pip install pathspec
-   ```
+> **Requires** Python 3.8+
 
-2. **Download the script**:
-
-   ```bash
-   # Option 1: Download directly
-   curl -O https://raw.githubusercontent.com/your-repo/copyfiles/main/copyfiles.py
-
-   # Option 2: Copy from another project
-   cp /path/to/copyfiles.py .
-   ```
-
-3. **Place in your project root**:
-   ```
-   your-project/
-   ├── copyfiles.py          # ← Place here
-   ├── .gitignore
-   ├── src/
-   └── ...
-   ```
+---
 
 ## Quick Start
 
-Generate a `copyfiles.txt` with default settings:
-
 ```bash
-python copyfiles.py
+# From your project root
+copyfiles
+
+# Generates ./copyfiles.txt:
+# ├── app.py
+# ├── module/
+# │   └── __init__.py
+# └── README.md
 ```
 
-This will:
+Open `copyfiles.txt` in any editor or paste it directly into ChatGPT / Gemini – you’ll see an ASCII tree followed by each file’s contents inside code fences.
 
-- Scan your current directory
-- Respect `.gitignore` patterns
-- Exclude common build artifacts (`.env`, `node_modules/`, `__pycache__/`, etc.)
-- Create `copyfiles.txt` with file paths and contents
+---
 
-## Usage
+## Advanced CLI Flags
 
-### Basic Usage
+| Flag              | Default         | Purpose                                                            |
+| ----------------- | --------------- | ------------------------------------------------------------------ |
+| `--root PATH`     | `.`             | Directory to scan.                                                 |
+| `--out FILE`      | `copyfiles.txt` | Output file name/path.                                             |
+| `--config FILE`   | _none_          | Extra ignore patterns (one per line, same syntax as `.gitignore`). |
+| `--max-bytes N`   | `100 000`       | Truncate individual files to the first _N_ bytes.                  |
+| `--skip-large KB` | _off_           | Skip files **larger than** _KB_ kilobytes entirely.                |
+| `-v / --verbose`  | off             | Show scanning / filtering progress.                                |
+| `--no-color`      | off             | Force plain-text output (useful in CI).                            |
+| `-V / --version`  | –               | Print version and exit.                                            |
+| `--help`          | –               | Full help text with examples.                                      |
 
-```bash
-# Use current directory as root
-python copyfiles.py
+---
 
-# Specify a different project root
-python copyfiles.py --root /path/to/project
+## 🧑‍💻 Contributing
 
-# Custom output file
-python copyfiles.py --out my-project-files.txt
-```
+1. **Fork** & clone the repo.
+2. Create a virtualenv and install dev deps:
 
-### Advanced Options
+   ```bash
+   python -m venv .venv && source .venv/bin/activate
+   pip install -e '.[dev]'
+   ```
 
-```bash
-# Verbose output to see what's happening
-python copyfiles.py --verbose
+3. Run the _entire_ QA suite before submitting a PR:
 
-# Limit file size (default: 100KB)
-python copyfiles.py --max-bytes 50000
+   ```bash
+   pytest          # unit + CLI tests
+   tox -p auto     # multi-python matrix + lint
+   ruff check src tests  # additional lint if you like
+   ```
 
-# Use custom ignore patterns
-python copyfiles.py --config .copyfiles-ignore
+4. Commit using conventional commits (`feat: …`, `fix: …`, etc.) and open a pull request – GitHub Actions will run the same tox matrix.
 
-# Combine options
-python copyfiles.py --root ./src --out context.txt --verbose --max-bytes 200000
-```
-
-### Command Line Options
-
-| Option            | Description                                  | Default                 |
-| ----------------- | -------------------------------------------- | ----------------------- |
-| `--root`          | Project root directory                       | `.` (current directory) |
-| `--out`           | Output file path                             | `copyfiles.txt`         |
-| `--config`        | Path to file with additional ignore patterns | None                    |
-| `--max-bytes`     | Maximum bytes per file to include            | `100000` (100KB)        |
-| `--verbose`, `-v` | Verbose output                               | False                   |
-
-## Configuration
-
-### Default Exclusions
-
-The script automatically excludes these patterns:
-
-```python
-DEFAULT_PATTERNS = [
-    ".env",           # Environment files
-    "node_modules/",  # Node.js dependencies
-    "__pycache__/",   # Python cache
-    "copyfiles.py",   # The script itself
-]
-```
-
-### Custom Ignore Patterns
-
-Create a `.copyfiles-ignore` file (or any name) with additional patterns:
-
-```bash
-# .copyfiles-ignore
-*.log
-dist/
-build/
-*.pyc
-.DS_Store
-```
-
-Then use it:
-
-```bash
-python copyfiles.py --config .copyfiles-ignore
-```
-
-### .gitignore Integration
-
-The script automatically reads and respects your project's `.gitignore` file. No additional configuration needed!
-
-## Examples
-
-### Example 1: Basic Project Context
-
-```bash
-# Generate context for a Python project
-python copyfiles.py --verbose
-```
-
-Output:
+### Project Layout
 
 ```
-[copyfiles] Scanning /path/to/project …
-[copyfiles] 45 files found, 23 after filtering.
-[copyfiles] Writing to /path/to/project/copyfiles.txt …
-[copyfiles] Done. 23 files processed, 15678 bytes written.
+src/copyfiles/       # library & CLI
+tests/               # unit and CLI tests + fixtures
+README.md
+pyproject.toml
+tox.ini
 ```
 
-### Example 2: Frontend Project
+---
 
-```bash
-# Focus on source files only
-python copyfiles.py --root ./src --out frontend-context.txt --verbose
-```
+## Licence
 
-### Example 3: Large Project with Custom Limits
+MIT – see `LICENSE` file for full text.
 
-```bash
-# Handle large files with custom limits
-python copyfiles.py --max-bytes 50000 --config .copyfiles-ignore
-```
+---
 
-### Example 4: Multiple Configurations
-
-```bash
-# Different configs for different use cases
-python copyfiles.py --config .copyfiles-dev.txt --out dev-context.txt
-python copyfiles.py --config .copyfiles-prod.txt --out prod-context.txt
-```
-
-## Output Format
-
-The generated `copyfiles.txt` contains:
-
-```
-# path/to/file.py
-<file contents>
-
-# another/file.js
-<file contents>
-
-# [truncated]
-```
-
-Each file is preceded by a header comment with the relative path, followed by the file contents.
-
-## Use Cases
-
-- **LLM Context**: Share complete project context with AI assistants
-- **Code Reviews**: Generate project snapshots for review
-- **Documentation**: Create comprehensive project documentation
-- **Backup**: Quick project backup with full content
-- **Onboarding**: Share project structure with new team members
-
-## Troubleshooting
-
-### Common Issues
-
-**"Error: 'pathspec' library is required"**
-
-```bash
-pip install pathspec
-```
-
-**"No .gitignore found"**
-
-- The script works without `.gitignore` but won't exclude gitignored files
-- Create a `.gitignore` file in your project root
-
-**"File too large"**
-
-- Use `--max-bytes` to limit file size
-- Large binary files are automatically skipped
-
-**"Permission denied"**
-
-- Ensure you have read permissions for the project directory
-- Check file permissions on individual files
-
-### Verbose Mode
-
-Use `--verbose` to see detailed information about what the script is doing:
-
-```bash
-python copyfiles.py --verbose
-```
-
-This will show:
-
-- Number of files found vs. filtered
-- Which files are being skipped and why
-- Progress during file writing
-
-## Contributing
-
-This is a standalone script designed to be simple and portable. To modify:
-
-1. Edit the `DEFAULT_PATTERNS` list at the top of `copyfiles.py`
-2. Add new functionality to the existing functions
-3. Test with `--verbose` to ensure changes work as expected
-
-## License
-
-This script is provided as-is for educational and practical use. Feel free to modify and distribute as needed.
+> Made with ☕, 🐍, and a sprinkle of Rich ANSI sparkle.
