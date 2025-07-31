@@ -1,0 +1,50 @@
+name: Release to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*" # e.g. v0.1.1
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token:
+        write # for trusted publishing (preferred)—
+        # OR remove and use TWINE_API_TOKEN secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build backend
+        run: |
+          python -m pip install --upgrade build
+
+      - name: Build sdist + wheel
+        run: |
+          python -m build --sdist --wheel --outdir dist/
+
+      # ---- Trusted Publish (PyPI tokenless) ----
+      # Requires the repository to be accepted in PyPI’s OIDC
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.8.8
+        with:
+          verbose: true
+          print-hash: true
+
+      # ---- Fallback: classic token-based upload ----
+      # - name: Publish with Twine
+      #   if: ${{ false }}  # flip to true if you prefer token auth
+      #   env:
+      #     TWINE_USERNAME: __token__
+      #     TWINE_PASSWORD: ${{ secrets.TWINE_API_TOKEN }}
+      #   run: |
+      #     python -m pip install --upgrade twine
+      #     twine upload dist/*
