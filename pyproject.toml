@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 #  Core project metadata
 [project]
 name        = "copyfiles"
-version     = "0.1.1"               # ← first PyPI release tag
+version     = "0.1.2"              
 description = "Generate a copyfiles.txt containing project tree + file contents."
 readme      = "README.md"
 requires-python = ">=3.8"
