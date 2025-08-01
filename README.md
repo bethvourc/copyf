@@ -1,6 +1,6 @@
-# copyfiles
+# copyfiles-cli
 
-**copyfiles** is a small but mighty CLI that scans a project directory, filters out junk via `.gitignore`-style rules, and spits out a single **`copyfiles.txt`** containing:
+**copyfiles-cli** is a small but mighty CLI that scans a project directory, filters out junk via `.gitignore`-style rules, and spits out a single **`copyfiles.txt`** containing:
 
 1.  _Project tree_ – an indented outline of kept files and folders.
 2.  _File contents_ – each retained file wrapped in a language-tagged code fence.
@@ -24,7 +24,7 @@ It’s perfect for piping an entire repo into an LLM prompt or sharing a compact
 
 ```bash
 # Recommended: inside a virtualenv
-pip install copyfiles           # from PyPI
+pip install copyfiles-cli           # from PyPI
 # or, for local development
 git clone https://github.com/yourname/copyfiles
 cd copyfiles
